@@ -4,9 +4,9 @@ version: 2.1
 executors:
   windows-sdk-executor:
     machine:
-      image: windows-server-2019-vs2019 # Or your preferred Windows image with VS 2019
-    resource_class: windows.xlarge # Or appropriate resource class
-    shell: bash.exe # Or cmd.exe if preferred for most commands
+      image: windows-server-2019-vs2019 # Or another available Windows image
+    resource_class: windows.large # Or windows.medium
+    shell: bash.exe
 
 jobs:
   build-virtualbox-windows:
