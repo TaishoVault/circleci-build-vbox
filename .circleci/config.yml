@@ -22,12 +22,18 @@ jobs:
             choco install -y openssl
             # Force reinstall python3 to ensure a clean state
             choco install -y --force python3
-            # Install Qt
-            wget https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.zip -OutFile qt.zip
-            7z x qt.zip -oqt
-            # Install SDL
-            wget https://www.libsdl.org/release/SDL2-devel-2.0.14-VC.zip -OutFile sdl.zip
-            7z x sdl.zip -osdl
+
+            # Install Qt, showing download and extraction progress
+            Write-Host "Downloading Qt..."
+            wget.exe --progress=bar:force https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.zip -O qt.zip
+            Write-Host "Extracting Qt..."
+            7z x qt.zip -oqt -bsp1
+
+            # Install SDL, showing download and extraction progress
+            Write-Host "Downloading SDL..."
+            wget.exe --progress=bar:force https://www.libsdl.org/release/SDL2-devel-2.0.14-VC.zip -O sdl.zip
+            Write-Host "Extracting SDL..."
+            7z x sdl.zip -osdl -bsp1
 
       - run:
           name: "Configure VirtualBox Build"
