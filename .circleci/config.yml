@@ -1,39 +1,32 @@
 version: 2.1
 
-# Define reusable executors
+orbs:
+  win: circleci/windows@5.0 # Use the latest stable version of the Windows orb
+
 executors:
-  windows-builder-executor:
-    machine:
-      image: 'windows-server-2019-gui:current'
-    resource_class: 'windows.medium' # Changed back to medium
-    shell: 'powershell.exe -ExecutionPolicy Bypass -NoLogo -NonInteractive -NoProfile -Command'
+  # Define a custom executor using the Windows orb's default Windows executor.
+  # This default typically uses a generally available image and resource class.
+  # You can override the resource_class if needed AND if available on your plan.
+  windows-orb-executor:
+    extends: win/default # This inherits settings from the orb
+    # If the orb's default resource class still doesn't work,
+    # AND you've confirmed a specific one IS available on your plan,
+    # you can try to override it. Example:
+    # resource_class: "windows.YOUR_AVAILABLE_CLASS" # e.g., "windows.medium" if truly available
 
 jobs:
   build-virtualbox-windows:
-    executor: windows-builder-executor
+    # Use the executor defined above, which leverages the Windows orb
+    executor: windows-orb-executor
     environment:
-      # --- CRITICAL: ADJUST ALL PATHS BELOW ---
-      # Base path for downloaded tools (you create this directory)
       VBOX_DEV_TOOLS_PATH: "C:\\VBoxDevTools"
-      PYTHON_EXECUTABLE: "C:\\Python27\\python.exe" # Full path to python.exe
-      # YASM needs to be in PATH or specify --with-yasm for configure.vbs
-      # QT_PATH: "C:\\Qt\\5.15.2\\msvc2019_64" # Example for Qt 5.15.2 MSVC2019 64-bit
-      # CURL_PATH_X64: "%VBOX_DEV_TOOLS_PATH%\\curl-x64"
-      # CURL_PATH_X86: "%VBOX_DEV_TOOLS_PATH%\\curl-x86"
-      # OPENSSL_PATH_X64: "%VBOX_DEV_TOOLS_PATH%\\openssl-x64"
-      # OPENSSL_PATH_X86: "%VBOX_DEV_TOOLS_PATH%\\openssl-x86"
-      # WIX_PATH: "C:\\Program Files (x86)\\WiX Toolset v3.11" # Often found here after choco install
-
-      # Variables for configure.vbs (can be auto-detected if tools are in standard locations)
-      # If auto-detection fails, explicitly pass paths to configure.vbs
-      # For VS2019, configure.vbs usually finds it if installed.
-      # For Windows SDK 10/11 and WDK 10/11, these are also usually found if installed with VS.
-
+      PYTHON_EXECUTABLE: "C:\\Python27\\python.exe"
+      # QT_PATH, CURL_PATH_X64, etc. need to be set based on your prerequisite installation
+      # WIX_PATH: "C:\\Program Files (x86)\\WiX Toolset v3.11"
     steps:
-      - checkout # Checks out your VirtualBox source code
-
+      - checkout
       - run:
-          name: Set PowerShell Execution Policy (Redundant if in shell, but safe)
+          name: Set PowerShell Execution Policy (Good practice)
           command: |
             Set-ExecutionPolicy Bypass -Scope Process -Force
             Get-ExecutionPolicy -List
@@ -42,167 +35,76 @@ jobs:
           name: Create Development Tools Directory
           command: |
             New-Item -ItemType Directory -Force -Path "$env:VBOX_DEV_TOOLS_PATH"
-            New-Item -ItemType Directory -Force -Path "$env:VBOX_DEV_TOOLS_PATH\yasm"
-            # Create other subdirectories as needed for curl, openssl etc.
-            New-Item -ItemType Directory -Force -Path "$env:VBOX_DEV_TOOLS_PATH\curl-x64"
-            New-Item -ItemType Directory -Force -Path "$env:VBOX_DEV_TOOLS_PATH\curl-x86"
-            New-Item -ItemType Directory -Force -Path "$env:VBOX_DEV_TOOLS_PATH\openssl-x64"
-            New-Item -ItemType Directory -Force -Path "$env:VBOX_DEV_TOOLS_PATH\openssl-x86"
+            # ... (other directories for yasm, curl, openssl)
 
+      # --- PREREQUISITE INSTALLATION ---
+      # This section remains highly dependent on your needs and the base image.
+      # The Windows Orb's default image will have some tools, but likely not all for VBox.
       - run:
-          name: Install Prerequisites (Conceptual - **ADAPT THIS SECTION THOROUGHLY**)
+          name: Install Prerequisites (ADAPT THOROUGHLY)
           command: |
             Write-Host "Starting prerequisite installation..."
-
-            # Chocolatey is a good package manager for Windows
-            # Ensure Chocolatey is installed or install it:
+            # Chocolatey
             # Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-
-            # Python 2.7.x (VirtualBox requirement)
+            # Python 2.7.x
             choco install python2 --version 2.7.18 -y --installargs "ADDLOCAL=ALL /quiet"
-            # Add Python27 to Path for this session (and for configure.vbs to find it)
             $env:PATH = "C:\Python27;C:\Python27\Scripts;" + $env:PATH
             $env:PYTHON_EXECUTABLE = "C:\Python27\python.exe"
-            Write-Host "Python Path: $env:PYTHON_EXECUTABLE"
-            python --version
-
-            # YASM (Assembler)
-            # Example: Download yasm manually (choco might not have latest or specific build for VS)
-            # $YASM_URL = "http://www.tortall.net/projects/yasm/releases/yasm-1.3.0-win64.exe" # Check for VS version
-            # $YASM_EXE = "$env:VBOX_DEV_TOOLS_PATH\yasm\yasm.exe"
-            # Invoke-WebRequest -Uri $YASM_URL -OutFile $YASM_EXE
-            # Add Yasm to Path for this session
-            # $env:PATH = "$env:VBOX_DEV_TOOLS_PATH\yasm;" + $env:PATH
-            # yasm --version
-            # OR using choco:
+            # YASM
             choco install yasm -y
-            # Yasm is often installed to C:\ProgramData\chocolatey\bin which should be in PATH
-
-            # WiX Toolset (for MSI packaging)
+            # WiX Toolset
             choco install wix -y
-            $env:WIX_PATH = "C:\Program Files (x86)\WiX Toolset v3.11" # Common path
-
-            # Qt (e.g., 5.15.2 for VS2019)
-            # This is complex. `aqtinstall` is recommended.
+            $env:WIX_PATH = "C:\Program Files (x86)\WiX Toolset v3.11"
+            # Qt (e.g., 5.15.2 for VS2019) - aqtinstall is a good option
             # pip install aqtinstall
             # aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O C:\Qt
             # $env:QT_PATH = "C:\Qt\5.15.2\msvc2019_64"
-            # $env:PATH = "$env:QT_PATH\bin;" + $env:PATH
-            Write-Host "QT_PATH should be set to your Qt installation, e.g., C:\Qt\5.15.2\msvc2019_64"
-            # Ensure the specific Qt version is built with/compatible with VS2019
-
-            # OpenSSL Development Libraries (Headers and .lib files)
-            # Example: Download precompiled from an unofficial source like https://slproweb.com/products/Win32OpenSSL.html (use with caution)
-            # Or build from source. You need 1.1.1 series or newer typically.
-            # Download and extract to $env:VBOX_DEV_TOOLS_PATH\openssl-x64 and $env:VBOX_DEV_TOOLS_PATH\openssl-x86
+            # OpenSSL & cURL development libraries - Manual download and extraction needed
             # $env:OPENSSL_PATH_X64 = "$env:VBOX_DEV_TOOLS_PATH\openssl-x64"
-            # $env:OPENSSL_PATH_X86 = "$env:VBOX_DEV_TOOLS_PATH\openssl-x86"
-            Write-Host "OPENSSL_PATH_X64 and OPENSSL_PATH_X86 must point to extracted OpenSSL dev libs"
-
-            # cURL Development Libraries (Headers and .lib files)
-            # Example: Download precompiled from official site (e.g., win64 mingw64 .zip, extract include/ and lib/)
-            # Download and extract to $env:VBOX_DEV_TOOLS_PATH\curl-x64 and $env:VBOX_DEV_TOOLS_PATH\curl-x86
             # $env:CURL_PATH_X64 = "$env:VBOX_DEV_TOOLS_PATH\curl-x64"
-            # $env:CURL_PATH_X86 = "$env:VBOX_DEV_TOOLS_PATH\curl-x86"
-            Write-Host "CURL_PATH_X64 and CURL_PATH_X86 must point to extracted cURL dev libs"
-
-            # Visual Studio 2019, Windows SDK, Windows WDK
-            # The 'windows-server-2019-gui:current' image should have VS2019 and relevant SDKs.
-            # WDK might need separate installation or selection in VS Installer.
-            # VirtualBox trunk often requires Windows 11 SDK/WDK. Ensure these are present.
-            Write-Host "Verifying Visual Studio, SDK, WDK installation..."
-            # Example path: & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-
-            Write-Host "Prerequisite installation conceptual phase complete. VERIFY ALL PATHS AND INSTALLATIONS."
+            Write-Host "VERIFY AND COMPLETE PREREQUISITE INSTALLATIONS AND PATHS"
 
       - run:
           name: Configure VirtualBox Build
           command: |
             Write-Host "Running configure.vbs..."
-            # Ensure Python 2.7 is used
-            # Update paths passed to --with-* options as per your actual installations
-            # If configure.vbs can auto-detect (e.g., from PATH or registry), some --with-* might not be needed.
-            # Ensure Visual Studio 2019 command prompt environment is effectively active or paths are set.
-            # For VS2019, configure.vbs often finds it.
-            cmd.exe /C "C:\Python27\python.exe configure.vbs --with-sdkver=10.0 --with-DDKVER=10.0 --with-python=""$env:PYTHON_EXECUTABLE"" --with-qt5=""$env:QT_PATH"" --with-openssl=""$env:OPENSSL_PATH_X64"" --with-openssl32=""$env:OPENSSL_PATH_X86"" --with-libcurl=""$env:CURL_PATH_X64"" --with-libcurl32=""$env:CURL_PATH_X86"""
-            # Check configure.log for errors
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "configure.vbs failed. Check configure.log"
-              Get-Content configure.log -Tail 50
-              exit 1
-            }
-            Get-Content configure.log -Tail 50 # Show tail of log
+            cmd.exe /C "C:\Python27\python.exe configure.vbs --with-sdkver=10.0 --with-DDKVER=10.0 --with-python=""$env:PYTHON_EXECUTABLE""" # Add other --with-* params as needed
+            if ($LASTEXITCODE -ne 0) { Write-Error "configure.vbs failed."; Get-Content configure.log -Tail 50; exit 1 }
+            Get-Content configure.log -Tail 20
 
       - run:
           name: Create LocalConfig.kmk
           command: |
-            Write-Host "Creating LocalConfig.kmk..."
-            # For VBOX_WIX_PATH, use the path from choco install wix or your manual install.
-            # Common path is "C:\Program Files (x86)\WiX Toolset v3.11"
-            # If you are not building the Guest Additions installer with NSIS, VBOX_PATH_NSIS can be omitted.
             @"
             VBOX_WIX_PATH := $env:WIX_PATH
             VBOX_SIGNING_MODE := test
-            VBOX_TESTCASES_EXCLUDE_FILES :=
-            VBOX_TESTCASES_EXCLUDE_DIRS :=
-            # Optional: Disable features to speed up build if not needed
-            # VBOX_WITH_VALIDATIONKIT :=
-            # VBOX_WITH_WEBSERVICES :=
-            # VBOX_WITHOUT_HARDENING := 1 # For CI testing ONLY, drivers still need signing.
             "@ | Set-Content -Path "LocalConfig.kmk" -Encoding ASCII
-            Get-Content LocalConfig.kmk
 
       - run:
           name: Build VirtualBox (Main Application and Drivers)
-          # This command sources env.bat (created by configure.vbs) and then runs kmk
-          # This will take a very long time.
           command: |
-            Write-Host "Sourcing env.bat and starting kmk build..."
             cmd.exe /C "env.bat && kmk"
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "kmk build failed."
-              # You might want to try and grab specific log files from out\ directory here
-              exit 1
-            }
+            if ($LASTEXITCODE -ne 0) { Write-Error "kmk build failed."; exit 1 }
 
-      - run:
-          name: Build 32-bit Guest Additions (if needed for 64-bit MSI)
-          command: |
-            Write-Host "Building 32-bit Guest Additions..."
-            cmd.exe /C "env.bat && kmk VBOX_ONLY_ADDITIONS=1 KBUILD_TARGET_ARCH=x86"
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "kmk 32-bit Guest Additions build failed."
-              exit 1
-            }
+      # - run: # Optional: Build 32-bit Guest Additions
+      #     name: Build 32-bit Guest Additions
+      #     command: |
+      #       cmd.exe /C "env.bat && kmk VBOX_ONLY_ADDITIONS=1 KBUILD_TARGET_ARCH=x86"
 
       - run:
           name: Package VirtualBox (Create MSI Installer)
           command: |
-            Write-Host "Packaging VirtualBox (kmk packing)..."
             cmd.exe /C "env.bat && kmk packing"
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "kmk packing failed."
-              exit 1
-            }
+            if ($LASTEXITCODE -ne 0) { Write-Error "kmk packing failed."; exit 1 }
 
       - store_artifacts:
-          name: Store VirtualBox MSI Installer
-          path: out/win.amd64/release/bin/ # Path for 64-bit build artifacts
-          # The MSI will be in here, e.g., VirtualBox-7.x.x-xxxxxx-Win.msi
+          path: out/win.amd64/release/bin/
           destination: virtualbox-msi
-
       - store_artifacts:
-          name: Store All Build Artifacts (Optional, for debugging)
-          path: out/
-          destination: virtualbox-full-output
-
-      - store_artifacts:
-          name: Store Configuration Log
           path: configure.log
           destination: logs
 
 workflows:
-  version: 2
   build-virtualbox:
     jobs:
       - build-virtualbox-windows
