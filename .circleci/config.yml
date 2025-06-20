@@ -1,79 +1,68 @@
 version: 2.1
 
 orbs:
-  win: circleci/windows@5.0.0
+  win: circleci/windows@2.4.0
 
 jobs:
-  build-virtualbox:
+  build-virtualbox-windows:
     executor:
       name: win/default
-      size: "large"
-      version: "2019.05.1" # Using a VS 2019 image
+      size: "large" # Building VirtualBox is resource-intensive
 
     steps:
       - checkout
 
       - run:
-          name: "Update PATH for Chocolatey"
+          name: "Update Chocolatey and Install Dependencies"
+          shell: powershell.exe
           command: |
-            echo 'export PATH="/c/ProgramData/chocolatey/bin:$PATH"' >> $BASH_ENV
-            source $BASH_ENV
+            choco install -y wget
+            choco install -y yasm
+            choco install -y wixtoolset
+            choco install -y openssl
+            choco install -y python3
+            # Install Qt
+            wget https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.zip -OutFile qt.zip
+            7z x qt.zip -oqt
+            # Install SDL
+            wget https://www.libsdl.org/release/SDL2-devel-2.0.14-VC.zip -OutFile sdl.zip
+            7z x sdl.zip -osdl
 
       - run:
-          name: Install Prerequisites with Chocolatey
+          name: "Configure VirtualBox Build"
+          shell: cmd.exe
           command: |
-            choco install -y yasm qt5-default openssl wixtoolset
+            set QTDIR=%cd%\\qt\\qt-everywhere-src-5.15.2
+            set SDLDIR=%cd%\\sdl\\SDL2-2.0.14
+            set OPENSSLDIR="C:\\Program Files\\OpenSSL-Win64"
+            set PYTHON="C:\\Python39\\python.exe"
+
+            cscript configure.vbs --with-qt-dir=%QTDIR% --with-sdl-dir=%SDLDIR% --with-openssl-dir=%OPENSSLDIR% --with-python=%PYTHON%
 
       - run:
-          name: Download and Extract SDL
+          name: "Build VirtualBox"
+          shell: cmd.exe
           command: |
-            curl -L -o sdl.zip http://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip
-            7z x sdl.zip -o"C:\SDL"
-            ren C:\SDL\SDL-1.2.15 C:\SDL\lib
+            call env.bat
+            kmk
 
       - run:
-          name: Download and Extract cURL
+          name: "Package VirtualBox"
+          shell: cmd.exe
           command: |
-            curl -L -o curl.zip https://curl.se/download/curl-7.88.1.zip
-            7z x curl.zip -o"C:\cURL"
-            ren C:\cURL\curl-7.88.1 C:\cURL\lib
-
-      - run:
-          name: Set Environment Variables for Build
-          command: |
-            echo 'export VBOX_WITH_QT_DIR="C:\Qt\5.15.2\msvc2019_64"' >> $BASH_ENV
-            echo 'export VBOX_WITH_SDL_DIR="C:\SDL\lib"' >> $BASH_ENV
-            echo 'export VBOX_WITH_CURL_DIR="C:\cURL\lib"' >> $BASH_ENV
-            echo 'export VBOX_WITH_OPENSSL_DIR="C:\Program Files\OpenSSL-Win64"' >> $BASH_ENV
-            echo 'export VBOX_WIX_PATH="C:\Program Files (x86)\WiX Toolset v3.11\bin"' >> $BASH_ENV
-            source $BASH_ENV
-
-      - run:
-          name: Configure VirtualBox Build
-          command: |
-            cscript configure.vbs --with-sdk="C:\Program Files (x86)\Microsoft SDKs\Windows\v7.1A" --with-vc="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools" --with-ddk="C:\WinDDK\7600.16385.1" --with-qt-dir=%VBOX_WITH_QT_DIR% --with-libsdl=%VBOX_WITH_SDL_DIR% --with-libcurl=%VBOX_WITH_CURL_DIR% --with-openssl=%VBOX_WITH_OPENSSL_DIR%
-
-      - run:
-          name: Set up Build Environment
-          command: |
-            cmd.exe /c env.bat
-
-      - run:
-          name: Build VirtualBox
-          command: |
-            cmd.exe /c kmk
-
-      - run:
-          name: Package VirtualBox
-          command: |
-            cmd.exe /c kmk packing
+            call env.bat
+            kmk packing
 
       - store_artifacts:
           path: out/win.amd64/release/bin
-          destination: virtualbox
+          destination: virtualbox-bins
+
+      - store_artifacts:
+          path: out/win.amd64/release/packages
+          destination: virtualbox-packages
 
 workflows:
   version: 2
-  build:
+  build-and-package:
     jobs:
-      - build-virtualbox
+      - build-virtualbox-windows
