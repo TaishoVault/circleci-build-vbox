@@ -20,7 +20,8 @@ jobs:
             choco install -y yasm
             choco install -y wixtoolset
             choco install -y openssl
-            choco install -y python3
+            # Force reinstall python3 to ensure a clean state
+            choco install -y --force python3
             # Install Qt
             wget https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.zip -OutFile qt.zip
             7z x qt.zip -oqt
