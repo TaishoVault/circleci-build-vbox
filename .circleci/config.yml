@@ -1,172 +1,257 @@
 version: 2.1
 
-orbs:
-  win: circleci/windows@5.0
-
+# Custom Windows executor for VirtualBox build
 executors:
-  linux_builder:
-    docker:
-      - image: cimg/ubuntu:20.04
-      # If cimg/ubuntu:20.04 pull continues to fail, try a more basic image for testing the pull itself:
-      # - image: cimg/base:stable
-    resource_class: medium # Start with medium, can be large if needed and available.
-    working_directory: ~/project/VirtualBox
-    environment:
-      TERM: dumb
-
-  windows_builder:
+  windows-executor:
     machine:
-      image: windows-server-2019-vs2019:stable
-    resource_class: windows.large # e.g., windows.medium, windows.large, windows.xlarge
-    shell: bash.exe # Default shell for steps in this executor
-    working_directory: C:\Users\circleci\project\VirtualBox # Standard checkout dir for project
-    environment:
-      VBOX_PATH_SIGN_TOOLS: "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.19041.0\\x64\\signtool.exe" # Example
-      VBOX_PATH_NSIS: "C:\\Program Files (x86)\\NSIS" # Example
-
-commands:
-  # This command should ONLY checkout source, no OS-specific installs.
-  checkout_vbox_source_only:
-    description: "Checkout VirtualBox source code from SVN (Subversion must be pre-installed)"
-    parameters:
-      revision:
-        type: string
-        default: "HEAD"
-    steps:
-      - run:
-          name: Checkout VirtualBox Source
-          # Assumes svn command is available on PATH
-          command: svn co https://www.virtualbox.org/svn/vbox/trunk . -r << parameters.revision >>
-
-  # Linux-specific build steps
-  build_vbox_linux:
-    description: "Configure and build VirtualBox on Linux"
-    steps:
-      - run:
-          name: Install Linux Build Dependencies
-          command: |
-            sudo apt-get update
-            # Main build tools and libraries
-            sudo apt-get install -y acpica-tools chrpath doxygen g++-multilib libasound2-dev libcap-dev \
-                               libcurl4-openssl-dev libdevmapper-dev libidl-dev libopus-dev libpam0g-dev \
-                               libpulse-dev libqt5opengl5-dev libqt5x11extras5-dev qttools5-dev libsdl1.2-dev \
-                               libsdl-ttf2.0-dev libssl-dev libvpx-dev libxcursor-dev libxinerama-dev libxml2-dev \
-                               libxml2-utils libxmu-dev libxrandr-dev make nasm python3-dev python2.7-dev qttools5-dev-tools \
-                               texlive texlive-fonts-extra texlive-latex-extra unzip xsltproc \
-                               default-jdk libstdc++5 libxslt1-dev linux-headers-$(uname -r) makeself \
-                               mesa-common-dev yasm zlib1g-dev glslang-tools libc6-dev-i386
-            # Ensure Python 2.7 is default if needed by older scripts (or use VBOX_PYTHON variables)
-            # sudo update-alternatives --install /usr/bin/python python /usr/bin/python2.7 1
-            # sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.8 2 # if python3 is also needed as default by other tools
-      - run:
-          name: Configure VirtualBox Build (Linux)
-          command: |
-            echo "VBOX_PATH_HOME_LINUX := /home/circleci" > LocalConfig.kmk
-            echo "VBOX_PYTHON2 := /usr/bin/python2.7" >> LocalConfig.kmk
-            echo "VBOX_PYTHON3 := /usr/bin/python3" >> LocalConfig.kmk # Adjust if python3 is e.g. python3.8
-            # Add other necessary flags to LocalConfig.kmk or configure script
-            ./configure --disable-hardening --enable-webservice # Add other options as needed
-            source ./env.sh
-      - run:
-          name: Build VirtualBox (kmk) - Linux
-          command: |
-            source ./env.sh
-            kmk all
-      - run:
-          name: Build Kernel Modules (Linux)
-          command: |
-            source ./env.sh
-            cd out/linux.amd64/release/bin/src # Adjust path based on actual output arch
-            make
-      - store_artifacts:
-          path: out/
-          destination: virtualbox-linux-build
-
-  # Windows-specific build steps
-  build_vbox_windows:
-    description: "Configure and build VirtualBox on Windows"
-    steps:
-      - run:
-          name: Install Windows Build Dependencies & Tools (Yasm, Python2, Wix, Java)
-          # This step uses the default shell for the executor (bash.exe)
-          command: |
-            echo "Installing core dependencies with Chocolatey..."
-            choco install python2 --version=2.7.18 --yes --no-progress
-            choco install yasm --yes --no-progress
-            choco install wixtoolset --yes --no-progress # For MSI packaging
-            choco install javaruntime --yes --no-progress # Or a specific JDK like 'openjdk --version=8'
-
-            echo "Setting PATH for common tools in this job's bash environment"
-            # For bash.exe, paths look like /c/path/to/tool
-            # Ensure these paths are correct after choco installation. Choco usually adds to system PATH.
-            # This $BASH_ENV modification helps ensure they are seen by subsequent bash commands in this job.
-            echo 'export PATH="/c/Python27:/c/Python27/Scripts:/c/ProgramData/chocolatey/bin:$PATH"' >> $BASH_ENV
-
-            echo "Windows Build Dependencies: Qt5 for MSVC 2019 x64 is a MANUAL setup."
-            echo "You must provide a step here to download and install a compatible Qt5 build."
-            echo "Example (replace with actual URL and paths):"
-            echo "# powershell -Command \"Invoke-WebRequest -Uri https://your-qt-host.com/qt-5.15.2-msvc2019-x64.zip -OutFile C:\\Qt.zip\""
-            echo "# powershell -Command \"Expand-Archive -Path C:\\Qt.zip -DestinationPath C:\\Qt_install\""
-            echo "# echo 'export PATH=/c/Qt_install/5.15.2/msvc2019_64/bin:$PATH' >> $BASH_ENV"
-            echo "Ensure Qt, Wix, JDK paths are correctly set in LocalConfig.kmk or system PATH for env.bat"
-      - run:
-          name: Configure VirtualBox Build (Windows)
-          command: |
-            # Create LocalConfig.kmk. Use forward slashes for paths within LocalConfig.kmk.
-            # These paths must be ACCURATE for your Windows CI environment.
-            echo VBOX_PATH_PYTHON_WIN := C:/Python27/python.exe > LocalConfig.kmk
-            echo VBOX_PATH_YASM_WIN := C:/ProgramData/chocolatey/bin/yasm.exe >> LocalConfig.kmk
-            echo VBOX_PATH_WIX_WIN := "C:/Program Files (x86)/WiX Toolset v3.11/bin" >> LocalConfig.kmk # Default WiX install path
-            echo VBOX_PATH_NSIS_WIN := "C:/Program Files (x86)/NSIS" >> LocalConfig.kmk # If you installed NSIS
-            # For Java, Choco 'javaruntime' often sets JAVA_HOME. If not, find and set VBOX_PATH_JAVA_WIN
-            # Example: echo VBOX_PATH_JAVA_WIN := C:/Program Files/Java/jdk1.8.0_XXX >> LocalConfig.kmk
-            echo VBOX_PATH_QT5_WIN := C:/Qt_install/5.15.2/msvc2019_64 >> LocalConfig.kmk # **ADJUST THIS QT PATH**
-            echo VBOX_SIGNING_MODE := test >> LocalConfig.kmk
-            echo VBOX_WITHOUT_HARDENING := 1 >> LocalConfig.kmk
-            echo VBOX_WITH_COMBINED_PACKAGE := 1 >> LocalConfig.kmk # To build the combined installer
-
-            # Run configure script using cscript
-            cscript configure.vbs --with-sdk-version=10.0.19041.0 --with-vc-version=2019 --disable-hardening
-      - run:
-          name: Build VirtualBox (kmk) - Windows
-          # env.bat sets environment variables needed by kmk.
-          # It must be run in the same command context as kmk.
-          command: |
-            cmd.exe /C "env.bat && kmk all"
-      - run:
-          name: Build Windows Installer Package (kmk packing)
-          command: |
-            cmd.exe /C "env.bat && kmk packing"
-      - store_artifacts:
-          path: out/
-          destination: virtualbox-windows-build
+      image: windows-server-2022-gui:current
+    resource_class: windows.large
+    shell: powershell.exe
 
 jobs:
-  build_linux:
-    executor: linux_builder
+  build-virtualbox-windows:
+    executor: windows-executor
+    
     steps:
-      - checkout # Checks out the repo where this config.yml is
+      - checkout
+      
+      # Install Chocolatey for package management
       - run:
-          name: Install Subversion (Linux)
-          command: sudo apt-get update && sudo apt-get install -y subversion
-      - checkout_vbox_source_only: # Call the simplified checkout command
-          revision: "HEAD" # Or a specific SVN revision number for reproducible builds
-      - build_vbox_linux # Reusable command for the rest of the Linux build
+          name: Install Chocolatey
+          command: |
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+      
+      # Install Visual Studio Build Tools
+      - run:
+          name: Install Visual Studio Build Tools 2019
+          command: |
+            choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --add Microsoft.VisualStudio.Component.VC.ATL --quiet" -y
+          no_output_timeout: 30m
+      
+      # Install Windows SDK and WDK
+      - run:
+          name: Install Windows SDK 11 and WDK 11
+          command: |
+            # Download and install Windows SDK 11
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2166460" -OutFile "winsdksetup.exe"
+            Start-Process -FilePath "winsdksetup.exe" -ArgumentList "/quiet" -Wait
+            
+            # Download and install WDK 11
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2166289" -OutFile "wdksetup.exe"
+            Start-Process -FilePath "wdksetup.exe" -ArgumentList "/quiet" -Wait
+          no_output_timeout: 20m
+      
+      # Install Python 2.7
+      - run:
+          name: Install Python 2.7
+          command: |
+            choco install python2 -y
+            refreshenv
+      
+      # Install Qt5
+      - run:
+          name: Install Qt5
+          command: |
+            choco install qt5-default -y
+          no_output_timeout: 15m
+      
+      # Install YASM
+      - run:
+          name: Install YASM
+          command: |
+            Invoke-WebRequest -Uri "https://www.tortall.net/projects/yasm/releases/yasm-1.3.0-win64.exe" -OutFile "C:\tools\yasm.exe"
+            $env:PATH += ";C:\tools"
+            [Environment]::SetEnvironmentVariable("PATH", $env:PATH, [EnvironmentVariableTarget]::Machine)
+      
+      # Install additional tools
+      - run:
+          name: Install Additional Tools
+          command: |
+            # Install Git (if not already present)
+            choco install git -y
+            
+            # Install 7-Zip for archive handling
+            choco install 7zip -y
+            
+            # Install curl
+            choco install curl -y
+      
+      # Download and setup SDL
+      - run:
+          name: Setup SDL Development Libraries
+          command: |
+            $sdlUrl = "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip"
+            Invoke-WebRequest -Uri $sdlUrl -OutFile "SDL-devel.zip"
+            Expand-Archive -Path "SDL-devel.zip" -DestinationPath "C:\tools\SDL"
+      
+      # Download and setup cURL development package
+      - run:
+          name: Setup cURL Development Package
+          command: |
+            $curlUrl = "https://curl.se/windows/dl-7.84.0_2/curl-7.84.0_2-win64-mingw.zip"
+            Invoke-WebRequest -Uri $curlUrl -OutFile "curl-devel.zip"
+            Expand-Archive -Path "curl-devel.zip" -DestinationPath "C:\tools\curl"
+      
+      # Setup environment and configure VirtualBox build
+      - run:
+          name: Configure VirtualBox Build Environment
+          command: |
+            # Setup environment variables
+            $env:VBOX_INSTALL_PATH = "C:\VirtualBox"
+            $env:PATH += ";C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin"
+            $env:PATH += ";C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64"
+            
+            # Create LocalConfig.kmk for custom settings
+            @"
+            # Disable features that require additional setup for CI
+            VBOX_WITH_WEBSERVICES=
+            VBOX_WITH_VALIDATIONKIT=
+            VBOX_WITHOUT_HARDENING=1
+            
+            # Paths for tools
+            VBOX_PATH_SIGN_TOOLS=C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\signtool.exe
+            VBOX_INF2CAT=C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\inf2cat.exe
+            
+            # Signing mode for testing
+            VBOX_SIGNING_MODE=test
+            "@ | Out-File -FilePath "LocalConfig.kmk" -Encoding ASCII
+      
+      # Run VirtualBox configure script
+      - run:
+          name: Run VirtualBox Configure Script
+          command: |
+            # Setup Visual Studio environment
+            & "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+            
+            # Run configure script
+            cscript configure.vbs --with-vc="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC" --with-sdk10="C:\Program Files (x86)\Windows Kits\10" --with-qt5="C:\Qt\5.15.2\msvc2019_64" --with-libsdl="C:\tools\SDL\SDL-1.2.15" --with-libcurl="C:\tools\curl" --with-python="C:\Python27"
+          no_output_timeout: 10m
+      
+      # Setup test certificate for code signing
+      - run:
+          name: Setup Test Certificate for Code Signing
+          command: |
+            # Create test certificate
+            & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\makecert.exe" -r -pe -ss my -eku 1.3.6.1.5.5.7.3.3 -n "CN=VirtualBoxTestCert" vboxtest.cer
+            
+            # Install certificate
+            & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\certmgr.exe" -add vboxtest.cer -s -r localMachine root
+            & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\certmgr.exe" -add vboxtest.cer -s -r localMachine trustedpublisher
+      
+      # Build VirtualBox
+      - run:
+          name: Build VirtualBox
+          command: |
+            # Enter build environment
+            & ".\env.bat"
+            
+            # Build release version
+            kmk
+          no_output_timeout: 60m
+      
+      # Create installation package
+      - run:
+          name: Create Installation Package
+          command: |
+            # Enter build environment
+            & ".\env.bat"
+            
+            # Create MSI package
+            kmk packing
+          no_output_timeout: 30m
+      
+      # Create zip archive of build artifacts
+      - run:
+          name: Create Build Artifacts Archive
+          command: |
+            # Determine architecture
+            $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "x86" }
+            $binPath = "out\win.$arch\release\bin"
+            
+            # Create artifacts directory
+            New-Item -ItemType Directory -Force -Path "artifacts"
+            
+            # Copy binaries to artifacts
+            Copy-Item -Path "$binPath\*" -Destination "artifacts\" -Recurse -Force
+            
+            # Create zip file
+            $zipName = "VirtualBox-Windows-$arch-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
+            Compress-Archive -Path "artifacts\*" -DestinationPath $zipName
+            
+            # Also copy MSI if it exists
+            $msiPath = "out\win.$arch\release\bin\VirtualBox-*.msi"
+            if (Test-Path $msiPath) {
+                Copy-Item -Path $msiPath -Destination "." -Force
+            }
+            
+            Write-Host "Build artifacts created: $zipName"
+      
+      # Store artifacts
+      - store_artifacts:
+          path: VirtualBox-Windows-*.zip
+          destination: virtualbox-build
+      
+      - store_artifacts:
+          path: VirtualBox-*.msi
+          destination: virtualbox-installer
+      
+      # Store test results if any
+      - store_test_results:
+          path: test-results
 
-  build_windows:
-    executor: windows_builder
+  # Optional: Build for both x86 and x64 architectures
+  build-virtualbox-x86:
+    executor: windows-executor
+    
     steps:
-      - checkout # Checks out the repo where this config.yml is
+      - checkout
+      
+      # Similar steps as above but with --target-arch=x86 parameter
       - run:
-          name: Install Subversion (Windows)
-          command: choco install svn --yes --no-progress
-      - checkout_vbox_source_only: # Call the simplified checkout command
-          revision: "HEAD" # Or a specific SVN revision number
-      - build_vbox_windows # Reusable command for the rest of the Windows build
+          name: Configure for x86 Build
+          command: |
+            # All the same setup steps as above...
+            # But run configure with x86 target
+            cscript configure.vbs --target-arch=x86 --with-vc="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC" --with-sdk10="C:\Program Files (x86)\Windows Kits\10"
+      
+      # Build steps for x86...
+      - run:
+          name: Build VirtualBox x86
+          command: |
+            & ".\env.bat"
+            kmk
+          no_output_timeout: 60m
 
 workflows:
   version: 2
-  build_virtualbox_from_scratch:
+  build-and-test:
     jobs:
-      - build_linux
-      - build_windows
+      - build-virtualbox-windows:
+          filters:
+            branches:
+              only:
+                - main
+                - develop
+                - /^release\/.*/
+      
+      # Optionally build x86 version in parallel
+      # - build-virtualbox-x86:
+      #     filters:
+      #       branches:
+      #         only:
+      #           - main
+      #           - develop
+
+  # Scheduled builds (e.g., nightly)
+  scheduled-build:
+    triggers:
+      - schedule:
+          cron: "0 2 * * *"  # Daily at 2 AM UTC
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - build-virtualbox-windows
