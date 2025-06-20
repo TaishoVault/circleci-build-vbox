@@ -1,17 +1,16 @@
 version: 2.1
 
-# Custom Windows executor for VirtualBox build
+# Windows executor for building VirtualBox
 executors:
   windows-executor:
     machine:
-      image: windows-server-2022-gui:current
-    resource_class: windows.large
-    shell: powershell.exe
+      image: windows-server-2019-vs2019:stable
+      shell: powershell.exe
+    resource_class: windows.xlarge
 
 jobs:
-  build-virtualbox-windows:
+  build-virtualbox:
     executor: windows-executor
-    
     steps:
       - checkout
       
@@ -21,237 +20,256 @@ jobs:
           command: |
             Set-ExecutionPolicy Bypass -Scope Process -Force
             [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
       
-      # Install Visual Studio Build Tools
+      # Install required prerequisites via Chocolatey
       - run:
-          name: Install Visual Studio Build Tools 2019
+          name: Install Prerequisites
           command: |
-            choco install visualstudio2019buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --add Microsoft.VisualStudio.Component.VC.ATL --quiet" -y
-          no_output_timeout: 30m
-      
-      # Install Windows SDK and WDK
-      - run:
-          name: Install Windows SDK 11 and WDK 11
-          command: |
-            # Download and install Windows SDK 11
-            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2166460" -OutFile "winsdksetup.exe"
-            Start-Process -FilePath "winsdksetup.exe" -ArgumentList "/quiet" -Wait
-            
-            # Download and install WDK 11
-            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2166289" -OutFile "wdksetup.exe"
-            Start-Process -FilePath "wdksetup.exe" -ArgumentList "/quiet" -Wait
-          no_output_timeout: 20m
-      
-      # Install Python 2.7
-      - run:
-          name: Install Python 2.7
-          command: |
+            # Install Python 2.7
             choco install python2 -y
-            refreshenv
-      
-      # Install Qt5
-      - run:
-          name: Install Qt5
-          command: |
-            choco install qt5-default -y
-          no_output_timeout: 15m
-      
-      # Install YASM
-      - run:
-          name: Install YASM
-          command: |
-            Invoke-WebRequest -Uri "https://www.tortall.net/projects/yasm/releases/yasm-1.3.0-win64.exe" -OutFile "C:\tools\yasm.exe"
-            $env:PATH += ";C:\tools"
-            [Environment]::SetEnvironmentVariable("PATH", $env:PATH, [EnvironmentVariableTarget]::Machine)
-      
-      # Install additional tools
-      - run:
-          name: Install Additional Tools
-          command: |
-            # Install Git (if not already present)
-            choco install git -y
             
-            # Install 7-Zip for archive handling
+            # Install NSIS
+            choco install nsis -y
+            
+            # Install 7zip for archive extraction
             choco install 7zip -y
+            
+            # Install Git (if not already available)
+            choco install git -y
             
             # Install curl
             choco install curl -y
-      
-      # Download and setup SDL
-      - run:
-          name: Setup SDL Development Libraries
-          command: |
-            $sdlUrl = "https://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip"
-            Invoke-WebRequest -Uri $sdlUrl -OutFile "SDL-devel.zip"
-            Expand-Archive -Path "SDL-devel.zip" -DestinationPath "C:\tools\SDL"
-      
-      # Download and setup cURL development package
-      - run:
-          name: Setup cURL Development Package
-          command: |
-            $curlUrl = "https://curl.se/windows/dl-7.84.0_2/curl-7.84.0_2-win64-mingw.zip"
-            Invoke-WebRequest -Uri $curlUrl -OutFile "curl-devel.zip"
-            Expand-Archive -Path "curl-devel.zip" -DestinationPath "C:\tools\curl"
-      
-      # Setup environment and configure VirtualBox build
-      - run:
-          name: Configure VirtualBox Build Environment
-          command: |
-            # Setup environment variables
-            $env:VBOX_INSTALL_PATH = "C:\VirtualBox"
-            $env:PATH += ";C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin"
-            $env:PATH += ";C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64"
             
-            # Create LocalConfig.kmk for custom settings
-            @"
-            # Disable features that require additional setup for CI
-            VBOX_WITH_WEBSERVICES=
-            VBOX_WITH_VALIDATIONKIT=
-            VBOX_WITHOUT_HARDENING=1
-            
-            # Paths for tools
-            VBOX_PATH_SIGN_TOOLS=C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\signtool.exe
-            VBOX_INF2CAT=C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\inf2cat.exe
-            
-            # Signing mode for testing
-            VBOX_SIGNING_MODE=test
-            "@ | Out-File -FilePath "LocalConfig.kmk" -Encoding ASCII
+            # Refresh environment
+            refreshenv
       
-      # Run VirtualBox configure script
+      # Download and install Visual Studio Build Tools 2019
       - run:
-          name: Run VirtualBox Configure Script
+          name: Install Visual Studio Build Tools
           command: |
-            # Setup Visual Studio environment
-            & "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+            $url = "https://aka.ms/vs/16/release/vs_buildtools.exe"
+            $output = "vs_buildtools.exe"
+            Invoke-WebRequest -Uri $url -OutFile $output
             
-            # Run configure script
-            cscript configure.vbs --with-vc="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC" --with-sdk10="C:\Program Files (x86)\Windows Kits\10" --with-qt5="C:\Qt\5.15.2\msvc2019_64" --with-libsdl="C:\tools\SDL\SDL-1.2.15" --with-libcurl="C:\tools\curl" --with-python="C:\Python27"
-          no_output_timeout: 10m
+            # Install with required workloads
+            Start-Process -FilePath $output -ArgumentList "--quiet", "--wait", "--add", "Microsoft.VisualStudio.Workload.VCTools", "--add", "Microsoft.VisualStudio.Component.Windows10SDK.19041", "--add", "Microsoft.VisualStudio.Component.VC.ATL" -Wait
       
-      # Setup test certificate for code signing
+      # Download Windows SDK 11
       - run:
-          name: Setup Test Certificate for Code Signing
+          name: Download Windows SDK 11
+          command: |
+            $sdkUrl = "https://go.microsoft.com/fwlink/?linkid=2166460"
+            $sdkOutput = "windowssdk.exe"
+            Invoke-WebRequest -Uri $sdkUrl -OutFile $sdkOutput
+            Start-Process -FilePath $sdkOutput -ArgumentList "/quiet" -Wait
+      
+      # Download Windows WDK 11
+      - run:
+          name: Download Windows WDK 11
+          command: |
+            $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2166289"
+            $wdkOutput = "wdk.msi"
+            Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkOutput
+            Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", $wdkOutput, "/quiet" -Wait
+      
+      # Download and setup Qt5
+      - run:
+          name: Download and Setup Qt5
+          command: |
+            $qtUrl = "https://download.qt.io/archive/qt/5.15/5.15.2/qt-opensource-windows-x86-5.15.2.exe"
+            $qtOutput = "qt-installer.exe"
+            Invoke-WebRequest -Uri $qtUrl -OutFile $qtOutput
+            
+            # Create unattended installation script
+            $installScript = @"
+            function Controller() {
+                installer.autoRejectMessageBoxes();
+                installer.installationFinished.connect(function() {
+                    gui.clickButton(buttons.NextButton);
+                })
+            }
+            
+            Controller.prototype.WelcomePageCallback = function() {
+                gui.clickButton(buttons.NextButton, 3000);
+            }
+            
+            Controller.prototype.CredentialsPageCallback = function() {
+                gui.clickButton(buttons.NextButton);
+            }
+            
+            Controller.prototype.IntroductionPageCallback = function() {
+                gui.clickButton(buttons.NextButton);
+            }
+            
+            Controller.prototype.TargetDirectoryPageCallback = function() {
+                gui.currentPageWidget().TargetDirectoryLineEdit.setText("C:\\Qt");
+                gui.clickButton(buttons.NextButton);
+            }
+            
+            Controller.prototype.ComponentSelectionPageCallback = function() {
+                var widget = gui.currentPageWidget();
+                widget.deselectAll();
+                widget.selectComponent("qt.qt5.5152.win64_msvc2019_64");
+                gui.clickButton(buttons.NextButton);
+            }
+            
+            Controller.prototype.LicenseAgreementPageCallback = function() {
+                gui.currentPageWidget().AcceptLicenseRadioButton.setChecked(true);
+                gui.clickButton(buttons.NextButton);
+            }
+            
+            Controller.prototype.StartMenuDirectoryPageCallback = function() {
+                gui.clickButton(buttons.NextButton);
+            }
+            
+            Controller.prototype.ReadyForInstallationPageCallback = function() {
+                gui.clickButton(buttons.NextButton);
+            }
+            
+            Controller.prototype.FinishedPageCallback = function() {
+                var checkBoxForm = gui.currentPageWidget().LaunchQtCreatorCheckBoxForm;
+                if (checkBoxForm && checkBoxForm.launchQtCreatorCheckBox) {
+                    checkBoxForm.launchQtCreatorCheckBox.setChecked(false);
+                }
+                gui.clickButton(buttons.FinishButton);
+            }
+"@
+            $installScript | Out-File -FilePath "qt-install.qs" -Encoding UTF8
+            
+            # Install Qt silently
+            Start-Process -FilePath $qtOutput -ArgumentList "--script", "qt-install.qs" -Wait
+      
+      # Download SDL development libraries
+      - run:
+          name: Download SDL
+          command: |
+            $sdlUrl = "https://github.com/libsdl-org/SDL/releases/download/release-1.2.15/SDL-devel-1.2.15-VC.zip"
+            $sdlOutput = "SDL-devel.zip"
+            Invoke-WebRequest -Uri $sdlUrl -OutFile $sdlOutput
+            7z x $sdlOutput -oC:\SDL
+      
+      # Download cURL development package
+      - run:
+          name: Download cURL
+          command: |
+            $curlUrl = "https://curl.se/windows/dl-7.85.0_3/curl-7.85.0_3-win64-mingw.zip"
+            $curlOutput = "curl-devel.zip"
+            Invoke-WebRequest -Uri $curlUrl -OutFile $curlOutput
+            7z x $curlOutput -oC:\curl
+      
+      # Download YASM
+      - run:
+          name: Download YASM
+          command: |
+            $yasmUrl = "http://www.tortall.net/projects/yasm/releases/yasm-1.3.0-win64.exe"
+            $yasmOutput = "C:\yasm\yasm.exe"
+            New-Item -ItemType Directory -Path C:\yasm -Force
+            Invoke-WebRequest -Uri $yasmUrl -OutFile $yasmOutput
+            
+            # Add to PATH
+            $env:PATH += ";C:\yasm"
+            [Environment]::SetEnvironmentVariable("PATH", $env:PATH, [EnvironmentVariableTarget]::Machine)
+      
+      # Download OpenSSL
+      - run:
+          name: Download OpenSSL
+          command: |
+            $opensslUrl = "https://slproweb.com/download/Win64OpenSSL-1_1_1w.exe"
+            $opensslOutput = "openssl-installer.exe"
+            Invoke-WebRequest -Uri $opensslUrl -OutFile $opensslOutput
+            Start-Process -FilePath $opensslOutput -ArgumentList "/SILENT", "/DIR=C:\OpenSSL" -Wait
+      
+      # Setup test signing certificate
+      - run:
+          name: Setup Test Signing
           command: |
             # Create test certificate
-            & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\makecert.exe" -r -pe -ss my -eku 1.3.6.1.5.5.7.3.3 -n "CN=VirtualBoxTestCert" vboxtest.cer
+            & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\makecert.exe" -r -pe -ss my -eku 1.3.6.1.5.5.7.3.3 -n "CN=VBoxTestCert" vboxtest.cer
             
             # Install certificate
             & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\certmgr.exe" -add vboxtest.cer -s -r localMachine root
             & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\certmgr.exe" -add vboxtest.cer -s -r localMachine trustedpublisher
+      
+      # Configure VirtualBox build
+      - run:
+          name: Configure VirtualBox Build
+          command: |
+            # Create LocalConfig.kmk with our settings
+            $localConfig = @"
+            VBOX_SIGNING_MODE=test
+            VBOX_WITHOUT_HARDENING=1
+            VBOX_WITH_VALIDATIONKIT=
+            VBOX_PATH_SIGN_TOOLS=C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\signtool.exe
+            VBOX_INF2CAT=C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\inf2cat.exe
+"@
+            $localConfig | Out-File -FilePath "LocalConfig.kmk" -Encoding UTF8
+            
+            # Run configure script
+            cscript configure.vbs --with-vc="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC" --with-sdk10="C:\Program Files (x86)\Windows Kits\10" --with-qt5="C:\Qt\5.15.2\msvc2019_64" --with-libsdl="C:\SDL\SDL-1.2.15" --with-libcurl="C:\curl\curl-7.85.0_3-win64-mingw" --with-openssl="C:\OpenSSL" --with-python="C:\Python27"
       
       # Build VirtualBox
       - run:
           name: Build VirtualBox
           command: |
             # Enter build environment
-            & ".\env.bat"
+            & .\env.bat
             
             # Build release version
             kmk
           no_output_timeout: 60m
       
-      # Create installation package
+      # Create MSI package
       - run:
-          name: Create Installation Package
+          name: Create MSI Package
           command: |
-            # Enter build environment
-            & ".\env.bat"
-            
-            # Create MSI package
+            # Enter build environment and create package
+            & .\env.bat
             kmk packing
-          no_output_timeout: 30m
       
-      # Create zip archive of build artifacts
+      # Prepare artifacts
       - run:
-          name: Create Build Artifacts Archive
+          name: Prepare Build Artifacts
           command: |
-            # Determine architecture
-            $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "x86" }
-            $binPath = "out\win.$arch\release\bin"
+            # Create output directory
+            New-Item -ItemType Directory -Path "build-output" -Force
             
-            # Create artifacts directory
-            New-Item -ItemType Directory -Force -Path "artifacts"
-            
-            # Copy binaries to artifacts
-            Copy-Item -Path "$binPath\*" -Destination "artifacts\" -Recurse -Force
-            
-            # Create zip file
-            $zipName = "VirtualBox-Windows-$arch-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
-            Compress-Archive -Path "artifacts\*" -DestinationPath $zipName
-            
-            # Also copy MSI if it exists
-            $msiPath = "out\win.$arch\release\bin\VirtualBox-*.msi"
-            if (Test-Path $msiPath) {
-                Copy-Item -Path $msiPath -Destination "." -Force
+            # Copy binaries
+            if (Test-Path "out\win.amd64\release\bin") {
+                Copy-Item "out\win.amd64\release\bin\*" "build-output\" -Recurse -Force
+            } elseif (Test-Path "out\win.x86\release\bin") {
+                Copy-Item "out\win.x86\release\bin\*" "build-output\" -Recurse -Force
             }
             
-            Write-Host "Build artifacts created: $zipName"
+            # Copy MSI if it exists
+            Get-ChildItem -Path "out" -Filter "*.msi" -Recurse | Copy-Item -Destination "build-output\"
+            
+            # Create zip file
+            7z a "VirtualBox-Windows-Build.zip" "build-output\*"
       
       # Store artifacts
       - store_artifacts:
-          path: VirtualBox-Windows-*.zip
-          destination: virtualbox-build
+          path: VirtualBox-Windows-Build.zip
+          destination: VirtualBox-Windows-Build.zip
       
+      # Store build logs
       - store_artifacts:
-          path: VirtualBox-*.msi
-          destination: virtualbox-installer
+          path: configure.log
+          destination: configure.log
       
       # Store test results if any
       - store_test_results:
           path: test-results
 
-  # Optional: Build for both x86 and x64 architectures
-  build-virtualbox-x86:
-    executor: windows-executor
-    
-    steps:
-      - checkout
-      
-      # Similar steps as above but with --target-arch=x86 parameter
-      - run:
-          name: Configure for x86 Build
-          command: |
-            # All the same setup steps as above...
-            # But run configure with x86 target
-            cscript configure.vbs --target-arch=x86 --with-vc="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC" --with-sdk10="C:\Program Files (x86)\Windows Kits\10"
-      
-      # Build steps for x86...
-      - run:
-          name: Build VirtualBox x86
-          command: |
-            & ".\env.bat"
-            kmk
-          no_output_timeout: 60m
-
 workflows:
   version: 2
   build-and-test:
     jobs:
-      - build-virtualbox-windows:
+      - build-virtualbox:
           filters:
             branches:
               only:
                 - main
                 - develop
+                - /^feature\/.*/
                 - /^release\/.*/
-      
-      # Optionally build x86 version in parallel
-      # - build-virtualbox-x86:
-      #     filters:
-      #       branches:
-      #         only:
-      #           - main
-      #           - develop
-
-  # Scheduled builds (e.g., nightly)
-  scheduled-build:
-    triggers:
-      - schedule:
-          cron: "0 2 * * *"  # Daily at 2 AM UTC
-          filters:
-            branches:
-              only:
-                - main
-    jobs:
-      - build-virtualbox-windows
