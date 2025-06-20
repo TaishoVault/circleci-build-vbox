@@ -1,50 +1,44 @@
 version: 2.1
 
 orbs:
-  win: circleci/windows@5.0 # Updated to a newer version of the Windows orb, good practice
+  win: circleci/windows@5.0
 
-# Define reusable executors for Linux and Windows builds
 executors:
   linux_builder:
     docker:
       - image: cimg/ubuntu:20.04
-    resource_class: large # Explicitly set resource class, can be medium, large, xlarge
+      # If cimg/ubuntu:20.04 pull continues to fail, try a more basic image for testing the pull itself:
+      # - image: cimg/base:stable
+    resource_class: medium # Start with medium, can be large if needed and available.
     working_directory: ~/project/VirtualBox
     environment:
       TERM: dumb
 
   windows_builder:
     machine:
-      image: windows-server-2019-vs2019:stable # This is the VM image
-    resource_class: windows.large # Specify a Windows resource class, e.g., windows.medium, windows.large, windows.xlarge
-    shell: bash.exe # Use bash for consistency
-    working_directory: C:\Users\circleci\project\VirtualBox # Use a typical Windows path for working directory
+      image: windows-server-2019-vs2019:stable
+    resource_class: windows.large # e.g., windows.medium, windows.large, windows.xlarge
+    shell: bash.exe # Default shell for steps in this executor
+    working_directory: C:\Users\circleci\project\VirtualBox # Standard checkout dir for project
     environment:
-      VBOX_PATH_SIGN_TOOLS: "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.19041.0\\x64\\signtool.exe" # Example path
-      VBOX_PATH_NSIS: "C:\\Program Files (x86)\\NSIS"
+      VBOX_PATH_SIGN_TOOLS: "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.19041.0\\x64\\signtool.exe" # Example
+      VBOX_PATH_NSIS: "C:\\Program Files (x86)\\NSIS" # Example
 
 commands:
-  checkout_vbox_source:
-    description: "Checkout VirtualBox source code from SVN"
+  # This command should ONLY checkout source, no OS-specific installs.
+  checkout_vbox_source_only:
+    description: "Checkout VirtualBox source code from SVN (Subversion must be pre-installed)"
     parameters:
       revision:
         type: string
-        default: "HEAD" # Default to HEAD, but recommend using a specific revision
+        default: "HEAD"
     steps:
       - run:
-          name: Install Subversion (Linux)
-          command: |
-            sudo apt-get update && sudo apt-get install -y subversion
-          when: on_success # Only run on Linux
-      - run:
-          name: Install Subversion (Windows) # Chocolatey is often available on CircleCI Windows images
-          command: |
-            choco install svn --yes --no-progress
-          when: on_success # Only run on Windows
-      - run:
           name: Checkout VirtualBox Source
+          # Assumes svn command is available on PATH
           command: svn co https://www.virtualbox.org/svn/vbox/trunk . -r << parameters.revision >>
 
+  # Linux-specific build steps
   build_vbox_linux:
     description: "Configure and build VirtualBox on Linux"
     steps:
@@ -52,8 +46,7 @@ commands:
           name: Install Linux Build Dependencies
           command: |
             sudo apt-get update
-            # Install prerequisites as per VirtualBox Linux build instructions
-            # This is a comprehensive list and might need adjustments
+            # Main build tools and libraries
             sudo apt-get install -y acpica-tools chrpath doxygen g++-multilib libasound2-dev libcap-dev \
                                libcurl4-openssl-dev libdevmapper-dev libidl-dev libopus-dev libpam0g-dev \
                                libpulse-dev libqt5opengl5-dev libqt5x11extras5-dev qttools5-dev libsdl1.2-dev \
@@ -61,24 +54,21 @@ commands:
                                libxml2-utils libxmu-dev libxrandr-dev make nasm python3-dev python2.7-dev qttools5-dev-tools \
                                texlive texlive-fonts-extra texlive-latex-extra unzip xsltproc \
                                default-jdk libstdc++5 libxslt1-dev linux-headers-$(uname -r) makeself \
-                               mesa-common-dev yasm zlib1g-dev glslang-tools \
-                               libc6-dev-i386 # For 32-bit support
-            # Setup for 32-bit libraries if not covered by libc6-dev-i386 directly on newer systems:
-            # sudo dpkg --add-architecture i386
-            # sudo apt-get update
-            # sudo apt-get install -y lib32gcc-s1 lib32stdc++6 # etc.
+                               mesa-common-dev yasm zlib1g-dev glslang-tools libc6-dev-i386
+            # Ensure Python 2.7 is default if needed by older scripts (or use VBOX_PYTHON variables)
+            # sudo update-alternatives --install /usr/bin/python python /usr/bin/python2.7 1
+            # sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.8 2 # if python3 is also needed as default by other tools
       - run:
-          name: Configure VirtualBox Build
+          name: Configure VirtualBox Build (Linux)
           command: |
-            # Create LocalConfig.kmk if needed for specific build flags
             echo "VBOX_PATH_HOME_LINUX := /home/circleci" > LocalConfig.kmk
-            # Add other flags as necessary, e.g., for Python versions
-            # echo "VBOX_PYTHON2 := /usr/bin/python2.7" >> LocalConfig.kmk
-            # echo "VBOX_PYTHON3 := /usr/bin/python3" >> LocalConfig.kmk
+            echo "VBOX_PYTHON2 := /usr/bin/python2.7" >> LocalConfig.kmk
+            echo "VBOX_PYTHON3 := /usr/bin/python3" >> LocalConfig.kmk # Adjust if python3 is e.g. python3.8
+            # Add other necessary flags to LocalConfig.kmk or configure script
             ./configure --disable-hardening --enable-webservice # Add other options as needed
             source ./env.sh
       - run:
-          name: Build VirtualBox (kmk)
+          name: Build VirtualBox (kmk) - Linux
           command: |
             source ./env.sh
             kmk all
@@ -86,63 +76,62 @@ commands:
           name: Build Kernel Modules (Linux)
           command: |
             source ./env.sh
-            # The path might vary slightly based on exact kernel version and arch
-            cd out/linux.amd64/release/bin/src # Adjust if building on different arch
+            cd out/linux.amd64/release/bin/src # Adjust path based on actual output arch
             make
       - store_artifacts:
           path: out/
           destination: virtualbox-linux-build
 
+  # Windows-specific build steps
   build_vbox_windows:
     description: "Configure and build VirtualBox on Windows"
     steps:
       - run:
-          name: Install Windows Build Dependencies & Tools
+          name: Install Windows Build Dependencies & Tools (Yasm, Python2, Wix, Java)
+          # This step uses the default shell for the executor (bash.exe)
           command: |
-            echo "Ensuring required tools are available. Consider using Chocolatey for missing ones."
-            # Example: choco install python2 yasm wixtoolset javaruntime --yes --no-progress
-            # Ensure Python 2.7, YASM, Wix, Java (JDK) are in PATH or configure paths in LocalConfig.kmk
-            # Qt5 needs to be installed and compiled with VS 2019. This is the hardest part.
-            # A pre-built Qt could be downloaded and extracted if available and compatible.
-            # Example:
-            # powershell -Command "Invoke-WebRequest -Uri https://example.com/qt-5.15-msvc2019.zip -OutFile C:\Qt.zip"
-            # powershell -Command "Expand-Archive -Path C:\Qt.zip -DestinationPath C:\Qt"
-            # Add C:\Qt\5.15\msvc2019_64\bin to PATH
-            echo "PATH C:\Python27;C:\Program Files\NASM;%PATH%" >> %BASH_ENV% # For YASM/NASM, Python2
-            # Set Wix path if installed via Choco (or manually)
-            # set VBOX_PATH_WIX=C:\Program Files (x86)\WiX Toolset v3.11\bin
-            # setx /M VBOX_PATH_WIX "C:\Program Files (x86)\WiX Toolset v3.11\bin"
+            echo "Installing core dependencies with Chocolatey..."
+            choco install python2 --version=2.7.18 --yes --no-progress
+            choco install yasm --yes --no-progress
+            choco install wixtoolset --yes --no-progress # For MSI packaging
+            choco install javaruntime --yes --no-progress # Or a specific JDK like 'openjdk --version=8'
+
+            echo "Setting PATH for common tools in this job's bash environment"
+            # For bash.exe, paths look like /c/path/to/tool
+            # Ensure these paths are correct after choco installation. Choco usually adds to system PATH.
+            # This $BASH_ENV modification helps ensure they are seen by subsequent bash commands in this job.
+            echo 'export PATH="/c/Python27:/c/Python27/Scripts:/c/ProgramData/chocolatey/bin:$PATH"' >> $BASH_ENV
+
+            echo "Windows Build Dependencies: Qt5 for MSVC 2019 x64 is a MANUAL setup."
+            echo "You must provide a step here to download and install a compatible Qt5 build."
+            echo "Example (replace with actual URL and paths):"
+            echo "# powershell -Command \"Invoke-WebRequest -Uri https://your-qt-host.com/qt-5.15.2-msvc2019-x64.zip -OutFile C:\\Qt.zip\""
+            echo "# powershell -Command \"Expand-Archive -Path C:\\Qt.zip -DestinationPath C:\\Qt_install\""
+            echo "# echo 'export PATH=/c/Qt_install/5.15.2/msvc2019_64/bin:$PATH' >> $BASH_ENV"
+            echo "Ensure Qt, Wix, JDK paths are correctly set in LocalConfig.kmk or system PATH for env.bat"
       - run:
           name: Configure VirtualBox Build (Windows)
           command: |
-            # Create or update LocalConfig.kmk
-            # Ensure paths are correct for your environment. Use forward slashes.
-            echo VBOX_PATH_PYTHON_WIN := C:/Python27 >> LocalConfig.kmk
-            echo VBOX_PATH_YASM_WIN := C:/Program Files/NASM/yasm.exe >> LocalConfig.kmk # Or wherever yasm is
-            echo VBOX_PATH_WIX_WIN := C:/Program Files (x86)/WiX Toolset v3.11/bin >> LocalConfig.kmk
-            echo VBOX_PATH_NSIS_WIN := C:/Program Files (x86)/NSIS >> LocalConfig.kmk
-            echo VBOX_PATH_JAVA_WIN := C:/Program Files/Java/jdk1.8.0_XXX >> LocalConfig.kmk # Update JDK version
-            echo VBOX_PATH_QT5_WIN := C:/Qt/5.15.2/msvc2019_64 >> LocalConfig.kmk # Adjust Qt path
+            # Create LocalConfig.kmk. Use forward slashes for paths within LocalConfig.kmk.
+            # These paths must be ACCURATE for your Windows CI environment.
+            echo VBOX_PATH_PYTHON_WIN := C:/Python27/python.exe > LocalConfig.kmk
+            echo VBOX_PATH_YASM_WIN := C:/ProgramData/chocolatey/bin/yasm.exe >> LocalConfig.kmk
+            echo VBOX_PATH_WIX_WIN := "C:/Program Files (x86)/WiX Toolset v3.11/bin" >> LocalConfig.kmk # Default WiX install path
+            echo VBOX_PATH_NSIS_WIN := "C:/Program Files (x86)/NSIS" >> LocalConfig.kmk # If you installed NSIS
+            # For Java, Choco 'javaruntime' often sets JAVA_HOME. If not, find and set VBOX_PATH_JAVA_WIN
+            # Example: echo VBOX_PATH_JAVA_WIN := C:/Program Files/Java/jdk1.8.0_XXX >> LocalConfig.kmk
+            echo VBOX_PATH_QT5_WIN := C:/Qt_install/5.15.2/msvc2019_64 >> LocalConfig.kmk # **ADJUST THIS QT PATH**
             echo VBOX_SIGNING_MODE := test >> LocalConfig.kmk
             echo VBOX_WITHOUT_HARDENING := 1 >> LocalConfig.kmk
             echo VBOX_WITH_COMBINED_PACKAGE := 1 >> LocalConfig.kmk # To build the combined installer
 
-            # Run configure script
+            # Run configure script using cscript
             cscript configure.vbs --with-sdk-version=10.0.19041.0 --with-vc-version=2019 --disable-hardening
-            # Sourcing env.bat. This might need to be done differently if commands are split.
-            # The ideal way is to have env.bat modify the current shell's environment.
-            # For bash.exe, we can try to convert env.bat output to export commands
-            cmd.exe /C "env.bat && set" > windows_env.tmp
-            # Convert Windows set syntax to bash export syntax and source it
-            # This is a bit hacky, check VirtualBox docs for better ways to persist env.bat changes across steps or use one giant step.
-            awk -F= '{print "export " $1"=\""$2"\""}' windows_env.tmp >> $BASH_ENV
-            # Or, more simply, prefix each kBuild command with `cmd.exe /C "env.bat && ..."`
       - run:
           name: Build VirtualBox (kmk) - Windows
+          # env.bat sets environment variables needed by kmk.
+          # It must be run in the same command context as kmk.
           command: |
-            # Source environment if $BASH_ENV worked, or prefix:
-            # cmd.exe /C "env.bat && kmk"
-            # For simplicity if $BASH_ENV method is tricky:
             cmd.exe /C "env.bat && kmk all"
       - run:
           name: Build Windows Installer Package (kmk packing)
@@ -156,18 +145,24 @@ jobs:
   build_linux:
     executor: linux_builder
     steps:
-      - checkout
-      - checkout_vbox_source:
+      - checkout # Checks out the repo where this config.yml is
+      - run:
+          name: Install Subversion (Linux)
+          command: sudo apt-get update && sudo apt-get install -y subversion
+      - checkout_vbox_source_only: # Call the simplified checkout command
           revision: "HEAD" # Or a specific SVN revision number for reproducible builds
-      - build_vbox_linux
+      - build_vbox_linux # Reusable command for the rest of the Linux build
 
   build_windows:
     executor: windows_builder
     steps:
-      - checkout
-      - checkout_vbox_source:
+      - checkout # Checks out the repo where this config.yml is
+      - run:
+          name: Install Subversion (Windows)
+          command: choco install svn --yes --no-progress
+      - checkout_vbox_source_only: # Call the simplified checkout command
           revision: "HEAD" # Or a specific SVN revision number
-      - build_vbox_windows
+      - build_vbox_windows # Reusable command for the rest of the Windows build
 
 workflows:
   version: 2
