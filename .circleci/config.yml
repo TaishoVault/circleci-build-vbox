@@ -4,15 +4,8 @@ version: 2.1
 executors:
   windows-builder-executor:
     machine:
-      # Common image that includes VS2019. Verify availability on your plan.
-      # VirtualBox trunk often requires VS2019 and Win11 SDK/WDK.
-      # The 'windows-server-2019-gui:current' image usually has VS2019.
-      # If building a version requiring VS2022, you'd use 'windows-server-2022-gui:current'.
       image: 'windows-server-2019-gui:current'
-    # Resource class: VirtualBox build is demanding. 'large' is recommended.
-    # 'medium' might be too slow or run out of memory/disk.
-    resource_class: 'windows.large'
-    # Using PowerShell as requested. Many VBox build scripts use cmd.
+    resource_class: 'windows.medium' # Changed back to medium
     shell: 'powershell.exe -ExecutionPolicy Bypass -NoLogo -NonInteractive -NoProfile -Command'
 
 jobs:
