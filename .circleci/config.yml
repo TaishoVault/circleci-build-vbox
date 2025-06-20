@@ -1,110 +1,43 @@
 version: 2.1
 
-orbs:
-  win: circleci/windows@5.0 # Use the latest stable version of the Windows orb
-
 executors:
-  # Define a custom executor using the Windows orb's default Windows executor.
-  # This default typically uses a generally available image and resource class.
-  # You can override the resource_class if needed AND if available on your plan.
-  windows-orb-executor:
-    extends: win/default # This inherits settings from the orb
-    # If the orb's default resource class still doesn't work,
-    # AND you've confirmed a specific one IS available on your plan,
-    # you can try to override it. Example:
-    # resource_class: "windows.YOUR_AVAILABLE_CLASS" # e.g., "windows.medium" if truly available
+  windows-sdk:
+    machine:
+      image: windows-server-2019-vs2019:stable
+    resource_class: windows.medium
 
 jobs:
-  build-virtualbox-windows:
-    # Use the executor defined above, which leverages the Windows orb
-    executor: windows-orb-executor
-    environment:
-      VBOX_DEV_TOOLS_PATH: "C:\\VBoxDevTools"
-      PYTHON_EXECUTABLE: "C:\\Python27\\python.exe"
-      # QT_PATH, CURL_PATH_X64, etc. need to be set based on your prerequisite installation
-      # WIX_PATH: "C:\\Program Files (x86)\\WiX Toolset v3.11"
+  build:
+    executor: windows-sdk
     steps:
       - checkout
       - run:
-          name: Set PowerShell Execution Policy (Good practice)
+          name: "Install Dependencies"
           command: |
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            Get-ExecutionPolicy -List
-
+            choco install -y qt5-base yasm curl openssl nsis wixtoolset 7zip
+            curl -L -o sdl.zip http://www.libsdl.org/release/SDL-devel-1.2.15-VC.zip
+            7z x sdl.zip -o"C:\SDL"
       - run:
-          name: Create Development Tools Directory
+          name: "Create LocalConfig.kmk"
           command: |
-            New-Item -ItemType Directory -Force -Path "$env:VBOX_DEV_TOOLS_PATH"
-            # ... (other directories for yasm, curl, openssl)
-
-      # --- PREREQUISITE INSTALLATION ---
-      # This section remains highly dependent on your needs and the base image.
-      # The Windows Orb's default image will have some tools, but likely not all for VBox.
+            echo VBOX_WITH_QT5_VERSION_MSG="5.15.2" > LocalConfig.kmk
+            echo VBOX_WITH_QT5_PATH="C:\\Qt\\5.15.2\\msvc2019_64" >> LocalConfig.kmk
+            echo VBOX_WITH_SDL_PATH="C:\\SDL\\SDL-1.2.15" >> LocalConfig.kmk
+            echo VBOX_WITH_CURL_PATH="C:\\ProgramData\\chocolatey\\lib\\curl\\tools" >> LocalConfig.kmk
+            echo VBOX_WITH_OPENSSL_PATH="C:\\ProgramData\\chocolatey\\lib\\openssl\\tools" >> LocalConfig.kmk
+            echo VBOX_WITH_WIX_PATH="C:\\Program Files (x86)\\WiX Toolset v3.11\\bin" >> LocalConfig.kmk
+            echo VBOX_PATH_NSIS="C:\\Program Files (x86)\\NSIS" >> LocalConfig.kmk
       - run:
-          name: Install Prerequisites (ADAPT THOROUGHLY)
+          name: "Configure and Build"
           command: |
-            Write-Host "Starting prerequisite installation..."
-            # Chocolatey
-            # Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            # Python 2.7.x
-            choco install python2 --version 2.7.18 -y --installargs "ADDLOCAL=ALL /quiet"
-            $env:PATH = "C:\Python27;C:\Python27\Scripts;" + $env:PATH
-            $env:PYTHON_EXECUTABLE = "C:\Python27\python.exe"
-            # YASM
-            choco install yasm -y
-            # WiX Toolset
-            choco install wix -y
-            $env:WIX_PATH = "C:\Program Files (x86)\WiX Toolset v3.11"
-            # Qt (e.g., 5.15.2 for VS2019) - aqtinstall is a good option
-            # pip install aqtinstall
-            # aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O C:\Qt
-            # $env:QT_PATH = "C:\Qt\5.15.2\msvc2019_64"
-            # OpenSSL & cURL development libraries - Manual download and extraction needed
-            # $env:OPENSSL_PATH_X64 = "$env:VBOX_DEV_TOOLS_PATH\openssl-x64"
-            # $env:CURL_PATH_X64 = "$env:VBOX_DEV_TOOLS_PATH\curl-x64"
-            Write-Host "VERIFY AND COMPLETE PREREQUISITE INSTALLATIONS AND PATHS"
-
+            cscript configure.vbs --with-sdk="C:\Program Files (x86)\Windows Kits\10" --with-wdk="C:\Program Files (x86)\Windows Kits\10"
+            cmd.exe /c "env.bat && kmk"
       - run:
-          name: Configure VirtualBox Build
+          name: "Package VirtualBox"
           command: |
-            Write-Host "Running configure.vbs..."
-            cmd.exe /C "C:\Python27\python.exe configure.vbs --with-sdkver=10.0 --with-DDKVER=10.0 --with-python=""$env:PYTHON_EXECUTABLE""" # Add other --with-* params as needed
-            if ($LASTEXITCODE -ne 0) { Write-Error "configure.vbs failed."; Get-Content configure.log -Tail 50; exit 1 }
-            Get-Content configure.log -Tail 20
-
-      - run:
-          name: Create LocalConfig.kmk
-          command: |
-            @"
-            VBOX_WIX_PATH := $env:WIX_PATH
-            VBOX_SIGNING_MODE := test
-            "@ | Set-Content -Path "LocalConfig.kmk" -Encoding ASCII
-
-      - run:
-          name: Build VirtualBox (Main Application and Drivers)
-          command: |
-            cmd.exe /C "env.bat && kmk"
-            if ($LASTEXITCODE -ne 0) { Write-Error "kmk build failed."; exit 1 }
-
-      # - run: # Optional: Build 32-bit Guest Additions
-      #     name: Build 32-bit Guest Additions
-      #     command: |
-      #       cmd.exe /C "env.bat && kmk VBOX_ONLY_ADDITIONS=1 KBUILD_TARGET_ARCH=x86"
-
-      - run:
-          name: Package VirtualBox (Create MSI Installer)
-          command: |
-            cmd.exe /C "env.bat && kmk packing"
-            if ($LASTEXITCODE -ne 0) { Write-Error "kmk packing failed."; exit 1 }
-
-      - store_artifacts:
-          path: out/win.amd64/release/bin/
-          destination: virtualbox-msi
-      - store_artifacts:
-          path: configure.log
-          destination: logs
+            cmd.exe /c "env.bat && kmk packing"
 
 workflows:
   build-virtualbox:
     jobs:
-      - build-virtualbox-windows
+      - build
