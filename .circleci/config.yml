@@ -7,29 +7,42 @@ jobs:
   build-virtualbox-windows:
     executor:
       name: win/default
-      size: "large" # Building VirtualBox is resource-intensive
+      size: "large"
 
     steps:
-      - checkout
+      # No - checkout step here. We will download the source manually.
 
       - run:
-          name: "Update Chocolatey and Install Dependencies"
+          name: "Install Dependencies"
           shell: powershell.exe
           command: |
-            choco install -y wget
-            choco install -y yasm
-            choco install -y wixtoolset
-            choco install -y openssl
-            # Force reinstall python3 to ensure a clean state
-            choco install -y --force python3
+            choco install -y wget yasm wixtoolset openssl --force python3
 
-            # Install Qt, showing download and extraction progress
+      - run:
+          name: "Download and Extract VirtualBox Source Code"
+          shell: powershell.exe
+          command: |
+            Write-Host "Downloading VirtualBox Source Code..."
+            # Using version 7.0.18 as an example. Change this version if needed.
+            wget.exe --progress=bar:force https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18.tar.bz2 -O VirtualBox.tar.bz2
+            
+            Write-Host "Extracting VirtualBox Source Code..."
+            # First, decompress the .bz2 file to a .tar file
+            7z x VirtualBox.tar.bz2 -bsp1
+            # Then, extract the .tar file
+            7z x VirtualBox.tar -o. -bsp1
+
+      - run:
+          name: "Install Build Dependencies (Qt and SDL)"
+          # This step now runs inside the extracted source folder
+          working_directory: ./VirtualBox-7.0.18
+          shell: powershell.exe
+          command: |
             Write-Host "Downloading Qt..."
-            wget.exe --progress=bar:force https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.zip -O qt.zip
+            wget.exe --progress=bar:force https://download.qt.io/archive/qt/5.15/2/single/qt-everywhere-src-5.15.2.zip -O qt.zip
             Write-Host "Extracting Qt..."
             7z x qt.zip -oqt -bsp1
 
-            # Install SDL, showing download and extraction progress
             Write-Host "Downloading SDL..."
             wget.exe --progress=bar:force https://www.libsdl.org/release/SDL2-devel-2.0.14-VC.zip -O sdl.zip
             Write-Host "Extracting SDL..."
@@ -37,17 +50,19 @@ jobs:
 
       - run:
           name: "Configure VirtualBox Build"
+          # This step also runs inside the extracted source folder
+          working_directory: ./VirtualBox-7.0.18
           shell: cmd.exe
           command: |
             set QTDIR=%cd%\\qt\\qt-everywhere-src-5.15.2
             set SDLDIR=%cd%\\sdl\\SDL2-2.0.14
             set OPENSSLDIR="C:\\Program Files\\OpenSSL-Win64"
             set PYTHON="C:\\Python39\\python.exe"
-
             cscript configure.vbs --with-qt-dir=%QTDIR% --with-sdl-dir=%SDLDIR% --with-openssl-dir=%OPENSSLDIR% --with-python=%PYTHON%
 
       - run:
           name: "Build VirtualBox"
+          working_directory: ./VirtualBox-7.0.18
           shell: cmd.exe
           command: |
             call env.bat
@@ -55,17 +70,18 @@ jobs:
 
       - run:
           name: "Package VirtualBox"
+          working_directory: ./VirtualBox-7.0.18
           shell: cmd.exe
           command: |
             call env.bat
             kmk packing
 
       - store_artifacts:
-          path: out/win.amd64/release/bin
+          path: ./VirtualBox-7.0.18/out/win.amd64/release/bin
           destination: virtualbox-bins
 
       - store_artifacts:
-          path: out/win.amd64/release/packages
+          path: ./VirtualBox-7.0.18/out/win.amd64/release/packages
           destination: virtualbox-packages
 
 workflows:
