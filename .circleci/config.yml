@@ -25,7 +25,14 @@ jobs:
 
             # Install Qt, showing download and extraction progress
             Write-Host "Downloading Qt..."
-            wget.exe --progress=bar:force https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.zip -O qt.zip
+            wget.exe --progress=bar:force --no-check-certificate https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.zip -O qt.zip
+            
+            # Verify Qt download
+            if ((Get-Item qt.zip).length -eq 0) {
+                Write-Error "Qt download failed - file is empty"
+                exit 1
+            }
+            
             Write-Host "Extracting Qt..."
             7z x qt.zip -oqt -bsp1
 
@@ -40,14 +47,25 @@ jobs:
             wget.exe --progress=bar:force https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18.tar.bz2 -O VirtualBox.tar.bz2
             Write-Host "Extracting VirtualBox Source Code..."
             7z x VirtualBox.tar.bz2 -bsp1        # Extracts to VirtualBox.tar
-            7z x VirtualBox.tar -oVirtualBox -bsp1 # Extracts to VirtualBox directory
+            7z x VirtualBox.tar -bsp1            # Extracts to VirtualBox-7.0.18 directory
+            
+            # Rename the extracted directory to just "VirtualBox"
+            if (Test-Path "VirtualBox-7.0.18") {
+                Rename-Item "VirtualBox-7.0.18" "VirtualBox"
+            }
       
       - run:
-          name: "Tree Structure of VirtualBox Directory"
-          shell: cmd.exe
-          working_directory: VirtualBox
+          name: "Verify VirtualBox Directory Structure"
+          shell: powershell.exe
           command: |
-            tree /F /A .\
+            if (Test-Path "VirtualBox") {
+                Write-Host "VirtualBox directory exists"
+                Get-ChildItem "VirtualBox" | Select-Object Name, Mode | Format-Table
+            } else {
+                Write-Error "VirtualBox directory not found"
+                Get-ChildItem | Select-Object Name, Mode | Format-Table
+                exit 1
+            }
 
       - run:
           name: "Configure VirtualBox Build"
@@ -57,7 +75,7 @@ jobs:
             set QTDIR=%cd%\\..\\qt\\qt-everywhere-src-5.15.2
             set SDLDIR=%cd%\\..\\sdl\\SDL2-2.0.14
             set OPENSSLDIR="C:\\Program Files\\OpenSSL-Win64"
-            set PYTHON="C:\\Python39\\python.exe"
+            set PYTHON="C:\\Python312\\python.exe"
             cscript configure.vbs --with-qt-dir=%QTDIR% --with-sdl-dir=%SDLDIR% --with-openssl-dir=%OPENSSLDIR% --with-python=%PYTHON%
 
       - run:
