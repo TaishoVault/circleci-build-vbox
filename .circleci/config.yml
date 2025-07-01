@@ -1,0 +1,82 @@
+version: 2.1
+
+orbs:
+  win: circleci/windows@2.4.0
+
+jobs:
+  build-virtualbox-windows:
+    executor:
+      name: win/default
+      size: "large" # Building VirtualBox is resource-intensive
+
+    steps:
+      - checkout
+
+      - run:
+          name: "Update Chocolatey and Install Dependencies"
+          shell: powershell.exe
+          command: |
+            choco install -y wget
+            choco install -y yasm
+            choco install -y wixtoolset
+            choco install -y openssl
+            # Force reinstall python3 to ensure a clean state
+            choco install -y --force python3
+
+            # Install Qt, showing download and extraction progress
+            Write-Host "Downloading Qt..."
+            wget.exe --progress=bar:force https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.zip -O qt.zip
+            Write-Host "Extracting Qt..."
+            7z x qt.zip -oqt -bsp1
+
+            # Install SDL, showing download and extraction progress
+            Write-Host "Downloading SDL..."
+            wget.exe --progress=bar:force https://www.libsdl.org/release/SDL2-devel-2.0.14-VC.zip -O sdl.zip
+            Write-Host "Extracting SDL..."
+            7z x sdl.zip -osdl -bsp1
+
+            # Download and extract VirtualBox source code
+            Write-Host "Downloading VirtualBox Source Code..."
+            wget.exe --progress=bar:force https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18.tar.bz2 -O VirtualBox.tar.bz2
+            Write-Host "Extracting VirtualBox Source Code..."
+            7z x VirtualBox.tar.bz2 -bsp1        # Extracts to VirtualBox.tar
+            7z x VirtualBox.tar -oVirtualBox -bsp1 # Extracts to VirtualBox directory
+
+      - run:
+          name: "Configure VirtualBox Build"
+          shell: cmd.exe
+          command: |
+            set QTDIR=%cd%\\qt\\qt-everywhere-src-5.15.2
+            set SDLDIR=%cd%\\sdl\\SDL2-2.0.14
+            set OPENSSLDIR="C:\\Program Files\\OpenSSL-Win64"
+            set PYTHON="C:\\Python39\\python.exe"
+
+            cscript configure.vbs --with-qt-dir=%QTDIR% --with-sdl-dir=%SDLDIR% --with-openssl-dir=%OPENSSLDIR% --with-python=%PYTHON%
+
+      - run:
+          name: "Build VirtualBox"
+          shell: cmd.exe
+          command: |
+            call env.bat
+            kmk
+
+      - run:
+          name: "Package VirtualBox"
+          shell: cmd.exe
+          command: |
+            call env.bat
+            kmk packing
+
+      - store_artifacts:
+          path: out/win.amd64/release/bin
+          destination: virtualbox-bins
+
+      - store_artifacts:
+          path: out/win.amd64/release/packages
+          destination: virtualbox-packages
+
+workflows:
+  version: 2
+  build-and-package:
+    jobs:
+      - build-virtualbox-windows
