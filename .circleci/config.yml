@@ -45,17 +45,18 @@ jobs:
       - run:
           name: "Configure VirtualBox Build"
           shell: cmd.exe
+          working_directory: VirtualBox
           command: |
             set QTDIR=%cd%\\qt\\qt-everywhere-src-5.15.2
             set SDLDIR=%cd%\\sdl\\SDL2-2.0.14
             set OPENSSLDIR="C:\\Program Files\\OpenSSL-Win64"
             set PYTHON="C:\\Python39\\python.exe"
-
-            cscript VirtualBox/configure.vbs --with-qt-dir=%QTDIR% --with-sdl-dir=%SDLDIR% --with-openssl-dir=%OPENSSLDIR% --with-python=%PYTHON%
+            cscript configure.vbs --with-qt-dir=%QTDIR% --with-sdl-dir=%SDLDIR% --with-openssl-dir=%OPENSSLDIR% --with-python=%PYTHON%
 
       - run:
           name: "Build VirtualBox"
           shell: cmd.exe
+          working_directory: VirtualBox
           command: |
             call env.bat
             kmk
@@ -63,16 +64,19 @@ jobs:
       - run:
           name: "Package VirtualBox"
           shell: cmd.exe
+          working_directory: VirtualBox
           command: |
             call env.bat
             kmk packing
 
       - store_artifacts:
           path: out/win.amd64/release/bin
+          working_directory: VirtualBox
           destination: virtualbox-bins
 
       - store_artifacts:
           path: out/win.amd64/release/packages
+          working_directory: VirtualBox
           destination: virtualbox-packages
 
 workflows:
