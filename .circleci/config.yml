@@ -41,6 +41,12 @@ jobs:
             Write-Host "Extracting VirtualBox Source Code..."
             7z x VirtualBox.tar.bz2 -bsp1        # Extracts to VirtualBox.tar
             7z x VirtualBox.tar -oVirtualBox -bsp1 # Extracts to VirtualBox directory
+      
+      - run:
+          name: "Tree Structure of VirtualBox Directory"
+          shell: cmd.exe
+          command: |
+            tree /F /A .\
 
       - run:
           name: "Configure VirtualBox Build"
