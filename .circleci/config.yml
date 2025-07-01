@@ -51,7 +51,7 @@ jobs:
             set OPENSSLDIR="C:\\Program Files\\OpenSSL-Win64"
             set PYTHON="C:\\Python39\\python.exe"
 
-            cscript configure.vbs --with-qt-dir=%QTDIR% --with-sdl-dir=%SDLDIR% --with-openssl-dir=%OPENSSLDIR% --with-python=%PYTHON%
+            cscript VirtualBox/configure.vbs --with-qt-dir=%QTDIR% --with-sdl-dir=%SDLDIR% --with-openssl-dir=%OPENSSLDIR% --with-python=%PYTHON%
 
       - run:
           name: "Build VirtualBox"
