@@ -58,7 +58,7 @@ jobs:
           shell: cmd.exe
           working_directory: VirtualBox
           command: |
-            call env.bat
+            call %cd%\\env.bat
             kmk
 
       - run:
@@ -66,7 +66,7 @@ jobs:
           shell: cmd.exe
           working_directory: VirtualBox
           command: |
-            call env.bat
+            call %cd%\\env.bat
             kmk packing
 
       - store_artifacts:
